@@ -13,7 +13,7 @@ namespace MaterialDesignThemes.Wpf
 {
     [TemplatePart(Name = ButtonPartName, Type = typeof(Button))]
     [TemplatePart(Name = PopupPartName, Type = typeof(Popup))]
-    [TemplatePart(Name = TextBoxPartName, Type = typeof(TextBox))]
+    [TemplatePart(Name = TextBoxPartName, Type = typeof(TimePickerTextBox))]
     public class TimePicker : Control
     {
         public const string ButtonPartName = "PART_Button";
@@ -22,9 +22,9 @@ namespace MaterialDesignThemes.Wpf
 
         private readonly ContentControl _clockHostContentControl;
         private readonly Clock _clock;
-        private TextBox _textBox;
-        private Popup _popup;
-        private Button _dropDownButton;
+        private TextBox? _textBox;
+        private Popup? _popup;
+        private Button? _dropDownButton;
         private bool _disablePopupReopen;
         private DateTime? _lastValidTime;
         private bool _isManuallyMutatingText;
@@ -32,21 +32,46 @@ namespace MaterialDesignThemes.Wpf
         static TimePicker()
         {
             DefaultStyleKeyProperty.OverrideMetadata(typeof(TimePicker), new FrameworkPropertyMetadata(typeof(TimePicker)));
+            EventManager.RegisterClassHandler(typeof(TimePicker), UIElement.GotFocusEvent, new RoutedEventHandler(OnGotFocus));
+        }
+
+        /// <summary>
+        ///     Called when this element gets focus.
+        /// </summary>
+        private static void OnGotFocus(object sender, RoutedEventArgs e)
+        {
+            // When TimePicker gets focus move it to the TextBox
+            TimePicker picker = (TimePicker)sender;
+            if ((!e.Handled) && (picker._textBox != null))
+            {
+                if (e.OriginalSource == picker)
+                {
+                    picker._textBox.Focus();
+                    e.Handled = true;
+                }
+                else if (e.OriginalSource == picker._textBox)
+                {
+                    picker._textBox.SelectAll();
+                    e.Handled = true;
+                }
+            }
         }
 
         public TimePicker()
         {
-            _clock = new Clock {
+            _clock = new Clock
+            {
                 DisplayAutomation = ClockDisplayAutomation.ToMinutesOnly
             };
-            _clockHostContentControl = new ContentControl {
+            _clockHostContentControl = new ContentControl
+            {
                 Content = _clock
             };
             InitializeClock();
         }
 
         public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
-            nameof(Text), typeof(string), typeof(TimePicker), new FrameworkPropertyMetadata(default(string), FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, TextPropertyChangedCallback));
+            nameof(Text), typeof(string), typeof(TimePicker), new FrameworkPropertyMetadata(default(string?), FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, TextPropertyChangedCallback));
 
         private static void TextPropertyChangedCallback(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs dependencyPropertyChangedEventArgs)
         {
@@ -54,12 +79,14 @@ namespace MaterialDesignThemes.Wpf
             if (!timePicker._isManuallyMutatingText)
                 timePicker.SetSelectedTime();
             if (timePicker._textBox != null)
-                timePicker._textBox.Text = dependencyPropertyChangedEventArgs.NewValue as string ?? "";
+            {
+                timePicker.UpdateTextBoxText(dependencyPropertyChangedEventArgs.NewValue as string ?? "");
+            }
         }
 
-        public string Text
+        public string? Text
         {
-            get => (string)GetValue(TextProperty);
+            get => (string?)GetValue(TextProperty);
             set => SetValue(TextProperty, value);
         }
 
@@ -102,7 +129,8 @@ namespace MaterialDesignThemes.Wpf
             var instance = (TimePicker)d;
             var args = new RoutedPropertyChangedEventArgs<DateTime?>(
                     (DateTime?)e.OldValue,
-                    (DateTime?)e.NewValue) { RoutedEvent = SelectedTimeChangedEvent };
+                    (DateTime?)e.NewValue)
+            { RoutedEvent = SelectedTimeChangedEvent };
             instance.RaiseEvent(args);
         }
 
@@ -172,7 +200,7 @@ namespace MaterialDesignThemes.Wpf
                 //TODO set time
                 //dp._originalSelectedDate = dp.SelectedDate;
 
-                timePicker.Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+                timePicker.Dispatcher?.BeginInvoke(DispatcherPriority.Input, new Action(() =>
                 {
                     timePicker._clock.Focus();
                 }));
@@ -180,20 +208,20 @@ namespace MaterialDesignThemes.Wpf
         }
 
         public static readonly DependencyProperty ClockStyleProperty = DependencyProperty.Register(
-            nameof(ClockStyle), typeof(Style), typeof(TimePicker), new PropertyMetadata(default(Style)));
+            nameof(ClockStyle), typeof(Style), typeof(TimePicker), new PropertyMetadata(default(Style?)));
 
-        public Style ClockStyle
+        public Style? ClockStyle
         {
-            get => (Style)GetValue(ClockStyleProperty);
+            get => (Style?)GetValue(ClockStyleProperty);
             set => SetValue(ClockStyleProperty, value);
         }
 
         public static readonly DependencyProperty ClockHostContentControlStyleProperty = DependencyProperty.Register(
-            nameof(ClockHostContentControlStyle), typeof(Style), typeof(TimePicker), new PropertyMetadata(default(Style)));
+            nameof(ClockHostContentControlStyle), typeof(Style), typeof(TimePicker), new PropertyMetadata(default(Style?)));
 
-        public Style ClockHostContentControlStyle
+        public Style? ClockHostContentControlStyle
         {
-            get => (Style)GetValue(ClockHostContentControlStyleProperty);
+            get => (Style?)GetValue(ClockHostContentControlStyleProperty);
             set => SetValue(ClockHostContentControlStyleProperty, value);
         }
 
@@ -285,15 +313,18 @@ namespace MaterialDesignThemes.Wpf
 
         private void TextBoxOnLostFocus(object sender, RoutedEventArgs routedEventArgs)
         {
-            if (string.IsNullOrEmpty(_textBox?.Text))
+            string? text = _textBox?.Text;
+            if (string.IsNullOrEmpty(text))
             {
                 SetCurrentValue(SelectedTimeProperty, null);
                 return;
             }
 
-            if (IsTimeValid(_textBox.Text, out DateTime time))
-                SetCurrentValue(SelectedTimeProperty, time);
-
+            if (IsTimeValid(text!, out DateTime time))
+            {
+                SetSelectedTime(time);
+                UpdateTextBoxTextIfNeeded(text!);
+            }
             else // Invalid time, jump back to previous good time
                 SetInvalidTime();
         }
@@ -302,17 +333,20 @@ namespace MaterialDesignThemes.Wpf
         {
             if (IsInvalidTextAllowed) return;
 
-            if (_lastValidTime != null)
+            if (_textBox is { } textBox)
             {
-                //SetCurrentValue(SelectedTimeProperty, _lastValidTime.Value);
-                //_textBox.Text = _lastValidTime.Value.ToString(_lastValidTime.Value.Hour % 12 > 9 ? "hh:mm tt" : "h:mm tt");
-                _textBox.Text = DateTimeToString(_lastValidTime.Value, DatePickerFormat.Short);
-            }
+                if (_lastValidTime != null)
+                {
+                    //SetCurrentValue(SelectedTimeProperty, _lastValidTime.Value);
+                    //_textBox.Text = _lastValidTime.Value.ToString(_lastValidTime.Value.Hour % 12 > 9 ? "hh:mm tt" : "h:mm tt");
+                    textBox.Text = DateTimeToString(_lastValidTime.Value, DatePickerFormat.Short);
+                }
 
-            else
-            {
-                SetCurrentValue(SelectedTimeProperty, null);
-                _textBox.Text = "";
+                else
+                {
+                    SetCurrentValue(SelectedTimeProperty, null);
+                    textBox.Text = "";
+                }
             }
 
         }
@@ -357,21 +391,53 @@ namespace MaterialDesignThemes.Wpf
 
         private void TextBoxOnTextChanged(object sender, TextChangedEventArgs textChangedEventArgs)
         {
-            if (_popup?.IsOpen == true || IsInvalidTextAllowed)
-                SetCurrentValue(TextProperty, _textBox.Text);
+            if (_textBox is { } textBox &&
+                (_popup?.IsOpen == true || IsInvalidTextAllowed))
+            {
+                SetCurrentValue(TextProperty, textBox.Text);
+            }
 
             if (_popup?.IsOpen == false)
                 SetSelectedTime(true);
         }
 
+        private void UpdateTextBoxText(string? text)
+        {
+            // Save and restore the cursor position
+            if (_textBox is { } textBox)
+            {
+                var caretIndex = textBox.CaretIndex;
+                textBox.Text = text;
+                textBox.CaretIndex = caretIndex;
+            }
+        }
+
+        private void UpdateTextBoxTextIfNeeded(string lastText)
+        {
+            if (_textBox?.Text == lastText)
+            {
+                string? formattedText = DateTimeToString(SelectedTime);
+                if (formattedText != lastText)
+                    UpdateTextBoxText(formattedText);
+            }
+        }
+
+        private void SetSelectedTime(in DateTime time)
+        {
+            SetCurrentValue(SelectedTimeProperty, (SelectedTime?.Date ?? DateTime.Today).Add(time.TimeOfDay));
+        }
+
         private void SetSelectedTime(bool beCautious = false)
         {
-            if (!string.IsNullOrEmpty(_textBox?.Text))
+            var currentText = _textBox?.Text;
+            if (!string.IsNullOrEmpty(currentText))
             {
-                ParseTime(_textBox.Text, t =>
+                ParseTime(currentText!, t =>
                 {
-                    if (!beCautious || DateTimeToString(t) == _textBox.Text)
-                        SetCurrentValue(SelectedTimeProperty, t);
+                    if (!beCautious || DateTimeToString(t) == currentText)
+                        SetSelectedTime(t);
+                    if (!beCautious)
+                        UpdateTextBoxTextIfNeeded(currentText!);
                 });
             }
             else
@@ -392,19 +458,15 @@ namespace MaterialDesignThemes.Wpf
 
             return DateTime.TryParse(s,
                                      culture,
-                                     DateTimeStyles.AssumeLocal | DateTimeStyles.AllowWhiteSpaces,
+                                     DateTimeStyles.AssumeLocal | DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault,
                                      out time);
         }
 
-        private string DateTimeToString(DateTime? d)
-        {
-            return d.HasValue ? DateTimeToString(d.Value) : null;
-        }
+        private string? DateTimeToString(DateTime? d)
+            => d.HasValue ? DateTimeToString(d.Value) : null;
 
         private string DateTimeToString(DateTime d)
-        {
-            return DateTimeToString(d, SelectedTimeFormat);
-        }
+            => DateTimeToString(d, SelectedTimeFormat);
 
         private string DateTimeToString(DateTime datetime, DatePickerFormat format)
         {
@@ -438,19 +500,18 @@ namespace MaterialDesignThemes.Wpf
 
         private void PopupOnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs mouseButtonEventArgs)
         {
-            var popup = sender as Popup;
-            if (popup == null || popup.StaysOpen) return;
+            if (!(sender is Popup popup) || popup.StaysOpen) return;
 
             if (_dropDownButton?.InputHitTest(mouseButtonEventArgs.GetPosition(_dropDownButton)) != null)
             {
                 // This popup is being closed by a mouse press on the drop down button 
                 // The following mouse release will cause the closed popup to immediately reopen. 
-                // Raise a flag to block reopeneing the popup
+                // Raise a flag to block re-opening the popup
                 _disablePopupReopen = true;
             }
         }
 
-        private void PopupOnClosed(object sender, EventArgs eventArgs)
+        private void PopupOnClosed(object? sender, EventArgs eventArgs)
         {
             if (IsDropDownOpen)
             {
@@ -466,7 +527,7 @@ namespace MaterialDesignThemes.Wpf
             //OnCalendarClosed(new RoutedEventArgs());
         }
 
-        private void PopupOnOpened(object sender, EventArgs eventArgs)
+        private void PopupOnOpened(object? sender, EventArgs eventArgs)
         {
             if (!IsDropDownOpen)
             {
@@ -495,10 +556,8 @@ namespace MaterialDesignThemes.Wpf
 
         private void ClockChoiceMadeHandler(object sender, ClockChoiceMadeEventArgs clockChoiceMadeEventArgs)
         {
-            if (
-                (WithSeconds && (clockChoiceMadeEventArgs.Mode == ClockDisplayMode.Seconds)) ||
-                (!WithSeconds && (clockChoiceMadeEventArgs.Mode == ClockDisplayMode.Minutes))
-            )
+            if (WithSeconds && clockChoiceMadeEventArgs.Mode == ClockDisplayMode.Seconds ||
+                !WithSeconds && clockChoiceMadeEventArgs.Mode == ClockDisplayMode.Minutes)
             {
                 TogglePopup();
                 if (SelectedTime == null)
@@ -509,9 +568,7 @@ namespace MaterialDesignThemes.Wpf
         }
 
         private void DropDownButtonOnClick(object sender, RoutedEventArgs routedEventArgs)
-        {
-            TogglePopup();
-        }
+            => TogglePopup();
 
         private void TogglePopup()
         {
@@ -529,9 +586,10 @@ namespace MaterialDesignThemes.Wpf
             }
         }
 
-        private BindingBase GetBinding(DependencyProperty property, IValueConverter converter = null)
+        private BindingBase GetBinding(DependencyProperty property, IValueConverter? converter = null)
         {
-            var binding = new Binding(property.Name) {
+            var binding = new Binding(property.Name)
+            {
                 Source = this,
                 Converter = converter
             };
